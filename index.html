@@ -715,6 +715,11 @@
     .reveal-delay-3 { transition-delay: .3s; }
     .reveal-delay-4 { transition-delay: .4s; }
   </style>
+
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script>
+  emailjs.init("y9jd6mcloY9COJYTh"); // ← ใส่ Public Key ของคุณ
+</script>
 </head>
 <body>
 
@@ -1171,16 +1176,18 @@
         <div class="form-row">
           <div class="form-group">
             <label><span data-lang="th">ชื่อ</span><span data-lang="en">Name</span><span data-lang="zh">姓名</span><span data-lang="ja">お名前</span></label>
-            <input type="text" placeholder="ชื่อของคุณ / Your name"/>
+            <input type="text" id="from_name" 
+           placeholder="ชื่อของคุณ / Your name"/>
           </div>
           <div class="form-group">
             <label><span data-lang="th">อีเมล</span><span data-lang="en">Email</span><span data-lang="zh">邮箱</span><span data-lang="ja">メール</span></label>
-            <input type="email" placeholder="your@email.com"/>
+           <input type="email" id="from_email" 
+           placeholder="your@email.com"/>
           </div>
         </div>
         <div class="form-group">
           <label><span data-lang="th">บริการที่สนใจ</span><span data-lang="en">Interested In</span><span data-lang="zh">感兴趣的服务</span><span data-lang="ja">ご希望のサービス</span></label>
-          <select>
+          <select id="service_interest">
             <option value="">-- กรุณาเลือก / Please select --</option>
             <option>01 · แพ็กเกจท่องเที่ยว / Tour Package</option>
             <option>02 · บริการรถรับส่ง / Transfer</option>
@@ -1191,8 +1198,17 @@
         </div>
         <div class="form-group">
           <label><span data-lang="th">ข้อความ</span><span data-lang="en">Message</span><span data-lang="zh">留言</span><span data-lang="ja">メッセージ</span></label>
-          <textarea rows="4" placeholder="บอกเราเรื่องทริปในฝันของคุณ / Tell us about your trip idea..."></textarea>
+          <textarea  id="message" rows="4" placeholder="บอกเราเรื่องทริปในฝันของคุณ / Tell us about your trip idea..."></textarea>
         </div>
+<div style="position:absolute;left:-9999px;
+            opacity:0;height:0;overflow:hidden" 
+     aria-hidden="true">
+  <input type="text" 
+         id="hp_website" 
+         name="website" 
+         tabindex="-1" 
+         autocomplete="off"/>
+</div>
         <button class="form-submit" onclick="handleSubmit(this)">
           <span data-lang="th">ส่งข้อความ — เริ่มวางแผนทริปได้เลย! →</span>
           <span data-lang="en">Send Message — Let's Plan Your Trip! →</span>
@@ -1370,17 +1386,150 @@ document.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
 /* ──────────────────────────────────────────
    FORM SUBMIT FEEDBACK
 ────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════
+   RATE LIMITER — ป้องกัน spam กด submit ถี่ๆ
+══════════════════════════════════════════════════ */
+const submitTracker = {
+  attempts: [],
+  maxAttempts: 3,         // สูงสุด 3 ครั้ง
+  windowMs:   10 * 60000, // ภายใน 10 นาที
+  isBlocked() {
+    const now = Date.now();
+    // ลบ attempt ที่หมดอายุออก
+    this.attempts = this.attempts.filter(t => now - t < this.windowMs);
+    return this.attempts.length >= this.maxAttempts;
+  },
+  record() {
+    this.attempts.push(Date.now());
+  }
+};
+
+/* ══════════════════════════════════════════════════
+   HANDLE SUBMIT
+══════════════════════════════════════════════════ */
 function handleSubmit(btn) {
+
+  // ── ข้อความแต่ละภาษา ──────────────────────────
   const msgs = {
-    th: '✓ ส่งข้อความสำเร็จ! เราจะติดต่อกลับเร็ว ๆ นี้',
-    en: '✓ Message sent! We will get back to you shortly.',
-    zh: '✓ 消息已发送！我们很快会与您联系。',
-    ja: '✓ 送信完了！まもなくご連絡いたします。'
+    th: {
+      sending : '⏳ กำลังส่ง...',
+      ok      : '✓ ส่งสำเร็จ! เราจะติดต่อกลับเร็วๆ นี้',
+      err     : '❌ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง',
+      blocked : '⛔ ส่งบ่อยเกินไป กรุณารอ 10 นาที',
+      empty   : '⚠️ กรุณากรอกชื่อและอีเมลให้ครบ',
+      bademail: '⚠️ รูปแบบอีเมลไม่ถูกต้อง'
+    },
+    en: {
+      sending : '⏳ Sending...',
+      ok      : '✓ Message sent! We will contact you shortly.',
+      err     : '❌ Error occurred. Please try again.',
+      blocked : '⛔ Too many attempts. Please wait 10 minutes.',
+      empty   : '⚠️ Please fill in name and email.',
+      bademail: '⚠️ Invalid email format.'
+    },
+    zh: {
+      sending : '⏳ 发送中...',
+      ok      : '✓ 消息已发送！我们将尽快与您联系。',
+      err     : '❌ 发生错误，请重试。',
+      blocked : '⛔ 发送太频繁，请等待10分钟。',
+      empty   : '⚠️ 请填写姓名和邮箱。',
+      bademail: '⚠️ 邮箱格式不正确。'
+    },
+    ja: {
+      sending : '⏳ 送信中...',
+      ok      : '✓ 送信完了！まもなくご連絡いたします。',
+      err     : '❌ エラーが発生しました。再度お試しください。',
+      blocked : '⛔ 送信回数が多すぎます。10分後にお試しください。',
+      empty   : '⚠️ お名前とメールアドレスを入力してください。',
+      bademail: '⚠️ メールアドレスの形式が正しくありません。'
+    }
   };
-  btn.textContent = msgs[currentLang] || msgs.en;
-  btn.style.background = '#2D8A3E';
+  const m = msgs[currentLang] || msgs.en;
+
+  // helper — แสดงข้อความแล้ว reset ปุ่ม
+  function showMsg(text, color, resetAfterMs, enableBtn) {
+    btn.textContent = text;
+    btn.style.background = color;
+    if (enableBtn) btn.disabled = false;
+    if (resetAfterMs) {
+      setTimeout(() => {
+        btn.textContent = currentLang === 'th'
+          ? 'ส่งข้อความ — เริ่มวางแผนทริปได้เลย! →'
+          : currentLang === 'zh' ? '发送消息 →'
+          : currentLang === 'ja' ? '送信する →'
+          : 'Send Message →';
+        btn.style.background = '';
+        btn.disabled = false;
+      }, resetAfterMs);
+    }
+  }
+
+  // ── 1. HONEYPOT CHECK ──────────────────────────
+  const hp = document.getElementById('hp_website');
+  if (hp && hp.value !== '') {
+    // บอทกรอก → หลอกว่าสำเร็จ เงียบๆ
+    console.warn('🤖 Bot detected');
+    showMsg(m.ok, '#2D8A3E', null, false);
+    return;
+  }
+
+  // ── 2. RATE LIMIT CHECK ────────────────────────
+  if (submitTracker.isBlocked()) {
+    showMsg(m.blocked, '#c0392b', 5000, true);
+    return;
+  }
+
+  // ── 3. VALIDATION ──────────────────────────────
+  const nameEl    = document.getElementById('from_name');
+  const emailEl   = document.getElementById('from_email');
+const selectEl  = document.querySelector('select');
+const textaEl   = document.querySelector('textarea');
+  const name      = nameEl?.value.trim()  || '';
+  const email     = emailEl?.value.trim() || '';
+const service   = selectEl?.value.trim() || 'ไม่ระบุ';
+const message   = textaEl?.value.trim()  || '(ไม่มีข้อความ)';
+  const emailOK   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  if (!name || !email) {
+    showMsg(m.empty, '#e67e22', 3000, true);
+    return;
+  }
+  if (!emailOK) {
+    showMsg(m.bademail, '#e67e22', 3000, true);
+    return;
+  }
+
+  // ── 4. SEND ────────────────────────────────────
   btn.disabled = true;
+  showMsg(m.sending, '#2A6DB5', null, false);
+
+  const params = {
+    from_name        : name,
+    from_email       : email,
+    service_interest : service,
+    message          : message
+  };
+
+  emailjs.send(
+    'service_cstemail',   // ← แทนด้วย Service ID จริง
+    'template_1p4a61i',  // ← แทนด้วย Template ID จริง
+    params
+  )
+  .then(() => {
+    submitTracker.record();
+    showMsg(m.ok, '#2D8A3E', null, false);
+    // ล้างฟอร์ม
+    nameEl.value  = '';
+    emailEl.value = '';
+    document.getElementById('message').value = '';
+    document.getElementById('service_interest').selectedIndex = 0;
+  })
+  .catch(err => {
+    console.error('EmailJS:', err);
+    showMsg(m.err, '#c0392b', 5000, true);
+  });
 }
+
 </script>
 </body>
 </html>
